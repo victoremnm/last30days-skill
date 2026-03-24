@@ -522,8 +522,9 @@ def _search_substack(
     from_date: str,
     to_date: str,
     depth: str,
+    config: dict = None,
 ) -> tuple:
-    """Search Substack via public search API (runs in thread).
+    """Search Substack via feeds + Brave discovery (runs in thread).
 
     Returns:
         Tuple of (substack_items, substack_error)
@@ -532,7 +533,7 @@ def _search_substack(
 
     try:
         response = substack.search_substack(
-            topic, from_date, to_date, depth=depth,
+            topic, from_date, to_date, depth=depth, config=config,
         )
     except Exception as e:
         return [], f"{type(e).__name__}: {e}"
@@ -1154,7 +1155,7 @@ def run_research(
 
         if do_substack:
             substack_future = executor.submit(
-                _search_substack, topic, from_date, to_date, depth
+                _search_substack, topic, from_date, to_date, depth, config
             )
 
         if web_backend:
