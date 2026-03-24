@@ -651,6 +651,65 @@ def score_polymarket_items(items: List[schema.PolymarketItem]) -> List[schema.Po
     return items
 
 
+def compute_substack_engagement_raw(engagement: Optional[schema.Engagement]) -> Optional[float]:
+    """Compute raw engagement score for Substack item.
+
+    Formula: 0.65*log1p(likes) + 0.35*log1p(num_comments)
+    Likes (heart reactions) are the primary Substack engagement signal;
+    comment count indicates discussion depth.
+    """
+    if engagement is None:
+        return None
+
+    if engagement.likes is None and engagement.num_comments is None:
+        return None
+
+    likes = log1p_safe(engagement.likes)
+    comments = log1p_safe(engagement.num_comments)
+
+    return 0.65 * likes + 0.35 * comments
+
+
+def score_substack_items(items: List[schema.SubstackItem]) -> List[schema.SubstackItem]:
+    """Compute scores for Substack items.
+
+    Uses same weight structure as Reddit/X (relevance + recency + engagement).
+    """
+    if not items:
+        return items
+
+    eng_raw = [compute_substack_engagement_raw(item.engagement) for item in items]
+    eng_normalized = normalize_to_100(eng_raw)
+
+    for i, item in enumerate(items):
+        rel_score = int(item.relevance * 100)
+        rec_score = dates.recency_score(item.date)
+
+        if eng_normalized[i] is not None:
+            eng_score = int(eng_normalized[i])
+        else:
+            eng_score = DEFAULT_ENGAGEMENT
+
+        item.subs = schema.SubScores(
+            relevance=rel_score,
+            recency=rec_score,
+            engagement=eng_score,
+        )
+
+        overall = (
+            WEIGHT_RELEVANCE * rel_score +
+            WEIGHT_RECENCY * rec_score +
+            WEIGHT_ENGAGEMENT * eng_score
+        )
+
+        if eng_raw[i] is None:
+            overall -= UNKNOWN_ENGAGEMENT_PENALTY
+
+        item.score = max(0, min(100, int(overall)))
+
+    return items
+
+
 def score_websearch_items(items: List[schema.WebSearchItem], query_type: QueryType = None) -> List[schema.WebSearchItem]:
     """Compute scores for WebSearch items WITHOUT engagement metrics.
 
@@ -717,8 +776,9 @@ _ITEM_SOURCE_MAP = {
     schema.BlueskyItem: "bluesky",
     schema.TruthSocialItem: "truthsocial",
     schema.PolymarketItem: "polymarket",
+    schema.SubstackItem: "substack",
 }
-_DEFAULT_TIEBREAKER = {"reddit": 0, "x": 1, "youtube": 2, "tiktok": 3, "instagram": 4, "hn": 5, "bluesky": 6, "truthsocial": 7, "polymarket": 8, "web": 9}
+_DEFAULT_TIEBREAKER = {"reddit": 0, "x": 1, "youtube": 2, "tiktok": 3, "instagram": 4, "hn": 5, "bluesky": 6, "truthsocial": 7, "polymarket": 8, "substack": 9, "web": 10}
 
 
 def sort_items(items: List[Union[schema.RedditItem, schema.XItem, schema.WebSearchItem, schema.YouTubeItem, schema.TikTokItem, schema.InstagramItem, schema.HackerNewsItem, schema.BlueskyItem, schema.TruthSocialItem, schema.PolymarketItem]], query_type: QueryType = None) -> List:

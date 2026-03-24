@@ -4,7 +4,7 @@ from typing import Any, Dict, List, TypeVar, Union
 
 from . import dates, schema
 
-T = TypeVar("T", schema.RedditItem, schema.XItem, schema.WebSearchItem, schema.YouTubeItem, schema.TikTokItem, schema.InstagramItem, schema.HackerNewsItem, schema.BlueskyItem, schema.PolymarketItem)
+T = TypeVar("T", schema.RedditItem, schema.XItem, schema.WebSearchItem, schema.YouTubeItem, schema.TikTokItem, schema.InstagramItem, schema.HackerNewsItem, schema.BlueskyItem, schema.PolymarketItem, schema.SubstackItem)
 
 
 def filter_by_date_range(
@@ -477,6 +477,51 @@ def normalize_polymarket_items(
             date_confidence="high",
             engagement=engagement,
             end_date=item.get("end_date"),
+            relevance=item.get("relevance", 0.5),
+            why_relevant=item.get("why_relevant", ""),
+        ))
+
+    return normalized
+
+
+def normalize_substack_items(
+    items: List[Dict[str, Any]],
+    from_date: str,
+    to_date: str,
+) -> List[schema.SubstackItem]:
+    """Normalize raw Substack items to schema.
+
+    Args:
+        items: Raw Substack items from substack.parse_substack_response()
+        from_date: Start of date range
+        to_date: End of date range
+
+    Returns:
+        List of SubstackItem objects
+    """
+    normalized = []
+
+    for i, item in enumerate(items):
+        # Parse engagement
+        eng_raw = item.get("engagement") or {}
+        engagement = schema.Engagement(
+            likes=eng_raw.get("likes"),
+            num_comments=eng_raw.get("num_comments"),
+        )
+
+        date_str = item.get("date")
+        date_confidence = dates.get_date_confidence(date_str, from_date, to_date)
+
+        normalized.append(schema.SubstackItem(
+            id=f"SS{i+1}",
+            title=item.get("title", ""),
+            subtitle=item.get("subtitle", ""),
+            url=item.get("url", ""),
+            publication_name=item.get("publication_name", ""),
+            author_name=item.get("author_name", ""),
+            date=date_str,
+            date_confidence=date_confidence,
+            engagement=engagement,
             relevance=item.get("relevance", 0.5),
             why_relevant=item.get("why_relevant", ""),
         ))
