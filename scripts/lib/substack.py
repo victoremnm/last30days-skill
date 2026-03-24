@@ -16,10 +16,13 @@ being returned to the pipeline.
 """
 
 import math
+import re
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode, urlparse
+import urllib.request
 
 from . import http
 from .query import extract_core_subject
@@ -449,6 +452,152 @@ def search_substack(
 
     _log(f"Total posts (before pipeline): {len(all_posts)}")
     return {"posts": all_posts}
+
+
+# ── X-mention enrichment ─────────────────────────────────────────────────────
+
+# Matches .substack.com/p/ posts and generic custom-domain /p/ paths
+_SUBSTACK_URL_RE = re.compile(
+    r'https?://(?:[\w-]+\.substack\.com|[\w.-]+)/p/[\w-]+(?:\?[^\s]*)?',
+    re.IGNORECASE,
+)
+# t.co shortlinks
+_TCO_RE = re.compile(r'https?://t\.co/\w+', re.IGNORECASE)
+
+
+def _resolve_tco(url: str, timeout: int = 5) -> Optional[str]:
+    """Follow a t.co redirect and return the final URL, or None on failure."""
+    try:
+        req = urllib.request.Request(url, method="HEAD")
+        req.add_header("User-Agent", "Mozilla/5.0")
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.url
+    except Exception:
+        return None
+
+
+def _extract_substack_urls(text: str, follow_tco: bool = True) -> List[str]:
+    """Extract all Substack post URLs from tweet text.
+
+    Expands t.co links that resolve to /p/ paths.
+    """
+    found: List[str] = []
+
+    # Direct matches
+    for m in _SUBSTACK_URL_RE.finditer(text):
+        found.append(m.group().rstrip(").,"))
+
+    # t.co candidates (only if no direct matches or follow_tco enabled)
+    if follow_tco:
+        for m in _TCO_RE.finditer(text):
+            tco = m.group()
+            resolved = _resolve_tco(tco)
+            if resolved and "/p/" in urlparse(resolved).path:
+                found.append(resolved)
+
+    # Dedupe, preserve order
+    seen: set = set()
+    result = []
+    for u in found:
+        if u not in seen:
+            seen.add(u)
+            result.append(u)
+    return result
+
+
+def enrich_x_with_substack_mentions(
+    x_items: List[Dict[str, Any]],
+    from_date: str = "",
+    to_date: str = "",
+    topic: str = "",
+    max_enrichments: int = 10,
+    follow_tco: bool = True,
+) -> List[Tuple[Dict[str, Any], str]]:
+    """Scan X items for Substack links and fetch post metadata.
+
+    For each X item containing a Substack /p/ URL (direct or via t.co):
+    - Fetches post metadata from the publication API
+    - Returns (substack_item_dict, x_item_id) pairs for pipeline merging
+
+    Args:
+        x_items: Raw X item dicts (pre-normalize)
+        from_date: Optional date lower bound (YYYY-MM-DD)
+        to_date: Optional date upper bound (YYYY-MM-DD)
+        topic: Research topic for relevance scoring
+        max_enrichments: Cap on total Substack fetches (avoids slow runs)
+        follow_tco: Whether to follow t.co redirects to detect Substack links
+
+    Returns:
+        List of (substack_item_dict, originating_x_id) tuples.
+    """
+    # Collect (url, x_id) candidates
+    candidates: List[Tuple[str, str]] = []
+    seen_urls: set = set()
+
+    for x_item in x_items:
+        text = x_item.get("text", "")
+        x_id = x_item.get("id", "")
+        if not text:
+            continue
+
+        urls = _extract_substack_urls(text, follow_tco=follow_tco)
+        for url in urls:
+            if url not in seen_urls:
+                seen_urls.add(url)
+                candidates.append((url, x_id))
+
+    if not candidates:
+        return []
+
+    candidates = candidates[:max_enrichments]
+    _log(f"X-mention enrichment: {len(candidates)} Substack URL(s) found")
+
+    results: List[Tuple[Dict[str, Any], str]] = []
+
+    def _fetch(url_x_id: Tuple[str, str]) -> Optional[Tuple[Dict[str, Any], str]]:
+        url, x_id = url_x_id
+        pub_post = _enrich_with_pub_api(url)
+        if pub_post:
+            item = _build_item_from_pub_post(pub_post, i=0, topic=topic)
+        else:
+            # Minimal fallback — at least surface the URL
+            parsed = urlparse(url)
+            item = {
+                "post_id": url,
+                "title": parsed.path.split("/")[-1].replace("-", " ").title(),
+                "subtitle": "",
+                "url": url,
+                "publication_name": parsed.netloc.replace("www.", ""),
+                "author_name": "",
+                "date": None,
+                "engagement": {"likes": 0, "num_comments": 0, "restacks": 0},
+                "relevance": 0.6,
+                "why_relevant": f"Substack (linked from X): {url[:80]}",
+            }
+        if not item:
+            return None
+
+        # Date filter
+        date_str = item.get("date")
+        if from_date and date_str and date_str < from_date:
+            return None
+        if to_date and date_str and date_str > to_date:
+            return None
+
+        return item, x_id
+
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        futures = {pool.submit(_fetch, c): c for c in candidates}
+        for future in as_completed(futures):
+            try:
+                result = future.result(timeout=10)
+                if result:
+                    results.append(result)
+            except Exception:
+                pass
+
+    _log(f"X-mention enrichment: {len(results)} Substack post(s) resolved")
+    return results
 
 
 def parse_substack_response(

@@ -1361,6 +1361,48 @@ def run_research(
             sys.stderr.write(f"[web] {len(web_items)} results\n")
             sys.stderr.flush()
 
+    # X → Substack double-click: scan X items for Substack links and enrich
+    if x_items and do_substack:
+        try:
+            ss_from_x = substack.enrich_x_with_substack_mentions(
+                x_items,
+                from_date=from_date,
+                to_date=to_date,
+                topic=topic,
+            )
+            seen_ss_urls = {item.get("url") for item in substack_items}
+            for ss_item, x_id in ss_from_x:
+                url = ss_item.get("url", "")
+                if url not in seen_ss_urls:
+                    seen_ss_urls.add(url)
+                    # Tag as X-linked for context
+                    ss_item["why_relevant"] = f"[via X:{x_id}] " + ss_item.get("why_relevant", "")
+                    substack_items.append(ss_item)
+        except Exception as e:
+            sys.stderr.write(f"[Substack] X-mention enrichment failed: {e}\n")
+            sys.stderr.flush()
+
+    # X → Substack enrichment: surface Substack posts linked from X tweets
+    if x_items and do_substack:
+        try:
+            x_ss_pairs = substack.enrich_x_with_substack_mentions(
+                x_items, from_date=from_date, to_date=to_date, topic=topic,
+            )
+            seen_ss_urls = {item.get("url") for item in substack_items}
+            for ss_item, x_id in x_ss_pairs:
+                url = ss_item.get("url", "")
+                if url not in seen_ss_urls:
+                    seen_ss_urls.add(url)
+                    # Tag the item so render knows it surfaced via X
+                    ss_item["_via_x_id"] = x_id
+                    substack_items.append(ss_item)
+                    # Back-annotate the X item with a linked_substack reference
+                    for xi in x_items:
+                        if xi.get("id") == x_id:
+                            xi.setdefault("linked_substack", []).append(url)
+        except Exception as e:
+            sys.stderr.write(f"[Substack] X→Substack enrichment failed: {e}\n")
+
     # Enrich Reddit items with real data (parallel, capped)
     # Skip enrichment if ScrapeCreators already provided comments + engagement
     enrich_max = timeouts["enrich_max_items"]
