@@ -432,6 +432,45 @@ class TruthSocialItem:
 
 
 @dataclass
+class SubstackItem:
+    """Normalized Substack post."""
+    id: str                  # "SS1", "SS2", ...
+    title: str
+    subtitle: str
+    url: str                 # canonical post URL
+    publication_name: str    # e.g. "Stratechery"
+    author_name: str
+    date: Optional[str] = None
+    date_confidence: str = "high"  # Substack returns exact publish timestamps
+    engagement: Optional[Engagement] = None  # likes + comment_count
+    relevance: float = 0.5
+    why_relevant: str = ""
+    subs: SubScores = field(default_factory=SubScores)
+    score: int = 0
+    cross_refs: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        d = {
+            'id': self.id,
+            'title': self.title,
+            'subtitle': self.subtitle,
+            'url': self.url,
+            'publication_name': self.publication_name,
+            'author_name': self.author_name,
+            'date': self.date,
+            'date_confidence': self.date_confidence,
+            'engagement': self.engagement.to_dict() if self.engagement else None,
+            'relevance': self.relevance,
+            'why_relevant': self.why_relevant,
+            'subs': self.subs.to_dict(),
+            'score': self.score,
+        }
+        if self.cross_refs:
+            d['cross_refs'] = self.cross_refs
+        return d
+
+
+@dataclass
 class PolymarketItem:
     """Normalized Polymarket prediction market item."""
     id: str           # "PM1", "PM2", ...
@@ -494,6 +533,7 @@ class Report:
     bluesky: List[BlueskyItem] = field(default_factory=list)
     truthsocial: List[TruthSocialItem] = field(default_factory=list)
     polymarket: List[PolymarketItem] = field(default_factory=list)
+    substack: List[SubstackItem] = field(default_factory=list)
     best_practices: List[str] = field(default_factory=list)
     prompt_pack: List[str] = field(default_factory=list)
     context_snippet_md: str = ""
@@ -508,6 +548,7 @@ class Report:
     bluesky_error: Optional[str] = None
     truthsocial_error: Optional[str] = None
     polymarket_error: Optional[str] = None
+    substack_error: Optional[str] = None
     # Handle resolution
     resolved_x_handle: Optional[str] = None
     # Cache info
@@ -535,6 +576,7 @@ class Report:
             'bluesky': [b.to_dict() for b in self.bluesky],
             'truthsocial': [ts.to_dict() for ts in self.truthsocial],
             'polymarket': [p.to_dict() for p in self.polymarket],
+            'substack': [s.to_dict() for s in self.substack],
             'best_practices': self.best_practices,
             'prompt_pack': self.prompt_pack,
             'context_snippet_md': self.context_snippet_md,

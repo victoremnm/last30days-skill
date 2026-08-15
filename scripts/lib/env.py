@@ -262,6 +262,7 @@ def get_config() -> Dict[str, Any]:
         ('BSKY_HANDLE', None),
         ('BSKY_APP_PASSWORD', None),
         ('TRUTHSOCIAL_TOKEN', None),
+        ('SUBSTACK_FEEDS', None),  # comma-separated publication URLs
     ]
 
     for key, default in keys:

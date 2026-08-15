@@ -250,6 +250,18 @@ def dedupe_polymarket(
     return dedupe_items(items, threshold)
 
 
+def dedupe_substack(
+    items: List[schema.SubstackItem],
+    threshold: float = 0.8,
+) -> List[schema.SubstackItem]:
+    """Dedupe Substack items.
+
+    Higher threshold (0.8) than other sources because Substack posts often
+    share similar titles across publications covering the same topic.
+    """
+    return dedupe_items(items, threshold)
+
+
 def cross_source_link(
     *source_lists: List[AnyItem],
     threshold: float = 0.40,
